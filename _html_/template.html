@@ -1,0 +1,16 @@
+<html>
+	<head>
+		<meta charset="UTF-8">
+		<title>{{.Title}}</title>
+	</head>
+	<body>
+		<p>
+		<form action="/files/selection/" method="POST">
+			<input type="submit" value="Download selection">
+			{{ range .DirectoryListEntries }}
+				<input type="checkbox" id={{.Id}} name={{.Id}}><img src={{.Icon}} width="24" height="24"><a href={{.Link}}>{{.LinkName}}</a><br>
+			{{ end }}
+		</form>
+		</p>
+	</body>
+</html>
