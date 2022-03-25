@@ -2,7 +2,10 @@ package main
 
 import (
 	"archive/zip"
+	"crypto/sha256"
+	"crypto/subtle"
 	"flag"
+	"fmt"
 	"html/template"
 	"io"
 	"log"
@@ -38,7 +41,36 @@ var CurrentDir string
 var RootDir string
 var ProgramDir string
 
+var _rewrite *string
+var _user string
+var _pass string
+
 var FileIdLookup = make(map[int]FileFolder)
+
+func AuthHandler(next http.HandlerFunc) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Println("Incoming request from " + r.RemoteAddr)
+		if _user == "" && _pass == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		user, pass, isOk := r.BasicAuth()
+		if isOk {
+			userHash := sha256.Sum256([]byte(user))
+			_userHash := sha256.Sum256([]byte(_user))
+			pwHash := sha256.Sum256([]byte(pass))
+			_pwHash := sha256.Sum256([]byte(_pass))
+			if subtle.ConstantTimeCompare(userHash[:], _userHash[:]) == 1 && subtle.ConstantTimeCompare(pwHash[:], _pwHash[:]) == 1 {
+				log.Println("Access granted to " + r.RemoteAddr)
+				next.ServeHTTP(w, r)
+				return
+			}
+		}
+		log.Println("Access denied to " + r.RemoteAddr)
+		w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	})
+}
 
 func root(w http.ResponseWriter, r *http.Request) {
 	CurrentDir = GetAbsolutePath(r.URL.Path)
@@ -62,7 +94,7 @@ func files(w http.ResponseWriter, r *http.Request) {
 		if mime == "" {
 			mime = "text/plain"
 		}
-		log.Println("Serving file " + file)
+		log.Println("Serving file " + file + " to " + r.RemoteAddr)
 		log.Println("Mime-Type detected: " + mime)
 		w.Header().Add("Content-Type", mime)
 		w.Header().Add("Content-Disposition", "attachment; filename="+strings.Split(r.RequestURI, "/")[len(strings.Split(r.RequestURI, "/"))-1])
@@ -82,7 +114,7 @@ func htmlfiles(w http.ResponseWriter, r *http.Request) {
 	if mime == "" {
 		mime = "text/plain"
 	}
-	log.Println("Serving file " + file)
+	log.Println("Serving file " + file + " to " + r.RemoteAddr)
 	log.Println("Mime-Type detected: " + mime)
 	w.Header().Add("Content-Type", mime)
 	w.Header().Add("Content-Disposition", "attachment; filename="+strings.Split(r.RequestURI, "/")[len(strings.Split(r.RequestURI, "/"))-1])
@@ -93,11 +125,12 @@ func selection(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Content-Disposition", "attachment; filename=ComposedDownload.zip")
 	w.Header().Add("Content-Type", "application/zip")
 	archive := zip.NewWriter(w)
+	log.Println("Serving selection to " + r.RemoteAddr)
 	r.ParseForm()
-	for idx, _ := range r.Form {
+	for idx := range r.Form {
 		i, _ := strconv.Atoi(idx)
-		AddFileToZip(FileIdLookup[i], archive)
 		log.Println("Adding " + FileIdLookup[i].Path)
+		AddFileToZip(FileIdLookup[i], archive)
 	}
 	// AddFileToZip("file.msi", archive)
 	// AddFileToZip("file.pdf", archive)
@@ -110,7 +143,7 @@ func ListDirectory() Page {
 	var data []DirectoryListEntry
 	if CurrentDir != RootDir+"/" {
 		data = append(data, DirectoryListEntry{
-			Icon:     "/_html_/folder.png",
+			Icon:     *_rewrite + "/_html_/folder.png",
 			LinkName: "../",
 			Link:     GetRelativePath(GetPreviousDirectory(CurrentDir)),
 		})
@@ -123,9 +156,9 @@ func ListDirectory() Page {
 			}
 			data = append(data, DirectoryListEntry{
 				Id:       id,
-				Icon:     "/_html_/folder.png",
+				Icon:     *_rewrite + "/_html_/folder.png",
 				LinkName: entry.Name(),
-				Link:     GetRelativePath(CurrentDir) + entry.Name(),
+				Link:     *_rewrite + GetRelativePath(CurrentDir) + entry.Name(),
 			})
 		} else {
 			FileIdLookup[id] = FileFolder{
@@ -134,9 +167,9 @@ func ListDirectory() Page {
 			}
 			data = append(data, DirectoryListEntry{
 				Id:       id,
-				Icon:     "/_html_/file.png",
+				Icon:     *_rewrite + "/_html_/file.png",
 				LinkName: entry.Name(),
-				Link:     "/files" + GetRelativePath(CurrentDir) + entry.Name(),
+				Link:     *_rewrite + "/files" + GetRelativePath(CurrentDir) + entry.Name(),
 			})
 
 		}
@@ -210,13 +243,20 @@ func main() {
 	ProgramDir, _ = os.Getwd()
 	ProgramDir = strings.ReplaceAll(ProgramDir, "\\", "/")
 	_flag := flag.String("root", ProgramDir, "The root directory for the webserver")
+	_port := flag.Int("port", 5000, "The port to listen on")
+	_rewrite = flag.String("rewrite", "", "Append the given string to any URL response (for use with reverse proxies)")
+	_user_ := flag.String("user", "", "The username to be used for auth")
+	_pass_ := flag.String("pass", "", "The password to be used for auth")
 	flag.Parse()
+	_user = *_user_
+	_pass = *_pass_
 	RootDir = strings.ReplaceAll(*_flag, "\\", "/")
 	CurrentDir = RootDir
 	log.Println("Current directory is " + CurrentDir)
-	http.HandleFunc("/", root)
-	http.HandleFunc("/files/", files)
-	http.HandleFunc("/files/selection/", selection)
-	http.HandleFunc("/_html_/", htmlfiles)
-	http.ListenAndServe(":5000", nil)
+	log.Println(fmt.Sprintf("Listening on port %d", *_port))
+	http.HandleFunc("/", AuthHandler(root))
+	http.HandleFunc("/files/", AuthHandler(files))
+	http.HandleFunc("/files/selection/", AuthHandler(selection))
+	http.HandleFunc("/_html_/", AuthHandler(htmlfiles))
+	http.ListenAndServe(fmt.Sprintf(":%d", *_port), nil)
 }
