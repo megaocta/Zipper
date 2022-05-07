@@ -4,12 +4,12 @@ import (
 	"archive/zip"
 	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
 	"flag"
 	"fmt"
 	"html/template"
 	"io"
 	"log"
-	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -49,7 +49,11 @@ var FileIdLookup = make(map[int]FileFolder)
 
 func AuthHandler(next http.HandlerFunc) http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log.Println("Incoming request from " + r.RemoteAddr)
+		addr := r.RemoteAddr
+		if r.Header.Get("X-Forwarded-For") != "" {
+			addr = r.Header.Get("X-Forwarded-For")
+		}
+		log.Println("Incoming request from " + addr)
 		if _user == "" && _pass == "" {
 			next.ServeHTTP(w, r)
 			return
@@ -61,12 +65,12 @@ func AuthHandler(next http.HandlerFunc) http.HandlerFunc {
 			pwHash := sha256.Sum256([]byte(pass))
 			_pwHash := sha256.Sum256([]byte(_pass))
 			if subtle.ConstantTimeCompare(userHash[:], _userHash[:]) == 1 && subtle.ConstantTimeCompare(pwHash[:], _pwHash[:]) == 1 {
-				log.Println("Access granted to " + r.RemoteAddr)
+				log.Println("Access granted to " + addr)
 				next.ServeHTTP(w, r)
 				return
 			}
 		}
-		log.Println("Access denied to " + r.RemoteAddr)
+		log.Println("Access denied to " + addr)
 		w.Header().Set("WWW-Authenticate", `Basic realm="restricted", charset="UTF-8"`)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 	})
@@ -75,57 +79,72 @@ func AuthHandler(next http.HandlerFunc) http.HandlerFunc {
 func root(w http.ResponseWriter, r *http.Request) {
 	CurrentDir = GetAbsolutePath(r.URL.Path)
 	t := template.Must(template.ParseFiles("_html_/template.html"))
-	err := t.Execute(w, ListDirectory())
+	p, err := ListDirectory()
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
+		http.Error(w, "Error serving page", http.StatusNotFound)
+		return
+	}
+	err = t.Execute(w, p)
+	if err != nil {
+		log.Println(err)
 	}
 }
 
 func files(w http.ResponseWriter, r *http.Request) {
+	addr := r.RemoteAddr
+	if r.Header.Get("X-Forwarded-For") != "" {
+		addr = r.Header.Get("X-Forwarded-For")
+	}
 	data, _ := url.QueryUnescape(r.RequestURI)
 	path := strings.Split(data, "/files/")
 	if len(path) > 1 {
-		f, err := os.Open(filepath.Join(RootDir, path[1]))
-		if err != nil {
-			w.Write([]byte("404 Not Found"))
-		}
+		// f, err := os.Open(filepath.Join(RootDir, path[1]))
+		// if err != nil {
+		// 	w.Write([]byte("404 Not Found"))
+		// }
 		file := filepath.Join(RootDir, path[1])
-		mime := mime.TypeByExtension("." + strings.Split(file, ".")[len(strings.Split(file, "."))-1])
-		if mime == "" {
-			mime = "text/plain"
-		}
-		log.Println("Serving file " + file + " to " + r.RemoteAddr)
-		log.Println("Mime-Type detected: " + mime)
-		w.Header().Add("Content-Type", mime)
-		w.Header().Add("Content-Disposition", "attachment; filename="+strings.Split(r.RequestURI, "/")[len(strings.Split(r.RequestURI, "/"))-1])
-		io.Copy(w, f)
+		// mime := mime.TypeByExtension("." + strings.Split(file, ".")[len(strings.Split(file, "."))-1])
+		// if mime == "" {
+		// 	mime = "text/plain"
+		// }
+		log.Println("Serving file " + file + " to " + addr)
+		// log.Println("Mime-Type detected: " + mime)
+		http.ServeFile(w, r, filepath.Join(RootDir, path[1]))
+		// w.Header().Add("Content-Type", mime)
+		// w.Header().Add("Content-Disposition", "attachment; filename="+strings.Split(r.RequestURI, "/")[len(strings.Split(r.RequestURI, "/"))-1])
+		//io.Copy(w, f)
 	} else {
-		w.Write([]byte("404 Not Found"))
+		http.Error(w, "Not found", http.StatusNotFound)
 	}
 }
 
 func htmlfiles(w http.ResponseWriter, r *http.Request) {
-	f, err := os.Open(filepath.Join(ProgramDir, r.RequestURI))
-	if err != nil {
-		w.Write([]byte("404 Not Found"))
-	}
-	file := filepath.Join(ProgramDir, r.RequestURI)
-	mime := mime.TypeByExtension("." + strings.Split(file, ".")[len(strings.Split(file, "."))-1])
-	if mime == "" {
-		mime = "text/plain"
-	}
-	log.Println("Serving file " + file + " to " + r.RemoteAddr)
-	log.Println("Mime-Type detected: " + mime)
-	w.Header().Add("Content-Type", mime)
-	w.Header().Add("Content-Disposition", "attachment; filename="+strings.Split(r.RequestURI, "/")[len(strings.Split(r.RequestURI, "/"))-1])
-	io.Copy(w, f)
+	// f, err := os.Open(filepath.Join(ProgramDir, r.RequestURI))
+	// if err != nil {
+	// 	w.Write([]byte("404 Not Found"))
+	// }
+	// file := filepath.Join(ProgramDir, r.RequestURI)
+	// mime := mime.TypeByExtension("." + strings.Split(file, ".")[len(strings.Split(file, "."))-1])
+	// if mime == "" {
+	// 	mime = "text/plain"
+	// }
+	d, _ := url.QueryUnescape(r.RequestURI)
+	http.ServeFile(w, r, filepath.Join(ProgramDir, d))
+	// w.Header().Add("Content-Type", mime)
+	// w.Header().Add("Content-Disposition", "attachment; filename="+strings.Split(r.RequestURI, "/")[len(strings.Split(r.RequestURI, "/"))-1])
+	// io.Copy(w, f)
 }
 
 func selection(w http.ResponseWriter, r *http.Request) {
+	addr := r.RemoteAddr
+	if r.Header.Get("X-Forwarded-For") != "" {
+		addr = r.Header.Get("X-Forwarded-For")
+	}
 	w.Header().Add("Content-Disposition", "attachment; filename=ComposedDownload.zip")
 	w.Header().Add("Content-Type", "application/zip")
 	archive := zip.NewWriter(w)
-	log.Println("Serving selection to " + r.RemoteAddr)
+	log.Println("Serving selection to " + addr)
 	r.ParseForm()
 	for idx := range r.Form {
 		i, _ := strconv.Atoi(idx)
@@ -137,9 +156,12 @@ func selection(w http.ResponseWriter, r *http.Request) {
 	archive.Close()
 }
 
-func ListDirectory() Page {
+func ListDirectory() (Page, error) {
 	id := 0
-	entries, _ := os.ReadDir(CurrentDir)
+	entries, err := os.ReadDir(CurrentDir)
+	if err != nil {
+		return Page{}, errors.New("Error reading directory " + CurrentDir)
+	}
 	var data []DirectoryListEntry
 	if CurrentDir != RootDir+"/" {
 		data = append(data, DirectoryListEntry{
@@ -178,7 +200,7 @@ func ListDirectory() Page {
 	return Page{
 		Title:                "Test",
 		DirectoryListEntries: data,
-	}
+	}, nil
 }
 
 func GetPreviousDirectory(path string) string {
@@ -258,5 +280,5 @@ func main() {
 	http.HandleFunc("/files/", AuthHandler(files))
 	http.HandleFunc("/files/selection/", AuthHandler(selection))
 	http.HandleFunc("/_html_/", AuthHandler(htmlfiles))
-	http.ListenAndServe(fmt.Sprintf(":%d", *_port), nil)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", *_port), nil))
 }
