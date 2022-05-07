@@ -26,6 +26,7 @@ type FileFolder struct {
 
 type Page struct {
 	Title                string
+	SubmitLocation       string
 	DirectoryListEntries []DirectoryListEntry
 }
 
@@ -167,7 +168,7 @@ func ListDirectory() (Page, error) {
 		data = append(data, DirectoryListEntry{
 			Icon:     *_rewrite + "/_html_/folder.png",
 			LinkName: "../",
-			Link:     GetRelativePath(GetPreviousDirectory(CurrentDir)),
+			Link:     *_rewrite + GetRelativePath(GetPreviousDirectory(CurrentDir)),
 		})
 	}
 	for _, entry := range entries {
@@ -199,6 +200,7 @@ func ListDirectory() (Page, error) {
 	}
 	return Page{
 		Title:                "Test",
+		SubmitLocation:       *_rewrite + "/files/selection/",
 		DirectoryListEntries: data,
 	}, nil
 }
