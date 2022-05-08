@@ -100,41 +100,23 @@ func files(w http.ResponseWriter, r *http.Request) {
 	data, _ := url.QueryUnescape(r.RequestURI)
 	path := strings.Split(data, "/files/")
 	if len(path) > 1 {
-		// f, err := os.Open(filepath.Join(RootDir, path[1]))
-		// if err != nil {
-		// 	w.Write([]byte("404 Not Found"))
-		// }
+
 		file := filepath.Join(RootDir, path[1])
-		// mime := mime.TypeByExtension("." + strings.Split(file, ".")[len(strings.Split(file, "."))-1])
-		// if mime == "" {
-		// 	mime = "text/plain"
-		// }
+
 		log.Println("Serving file " + file + " to " + addr)
-		// log.Println("Mime-Type detected: " + mime)
+
 		http.ServeFile(w, r, filepath.Join(RootDir, path[1]))
-		// w.Header().Add("Content-Type", mime)
-		// w.Header().Add("Content-Disposition", "attachment; filename="+strings.Split(r.RequestURI, "/")[len(strings.Split(r.RequestURI, "/"))-1])
-		//io.Copy(w, f)
+
 	} else {
 		http.Error(w, "Not found", http.StatusNotFound)
 	}
 }
 
 func htmlfiles(w http.ResponseWriter, r *http.Request) {
-	// f, err := os.Open(filepath.Join(ProgramDir, r.RequestURI))
-	// if err != nil {
-	// 	w.Write([]byte("404 Not Found"))
-	// }
-	// file := filepath.Join(ProgramDir, r.RequestURI)
-	// mime := mime.TypeByExtension("." + strings.Split(file, ".")[len(strings.Split(file, "."))-1])
-	// if mime == "" {
-	// 	mime = "text/plain"
-	// }
+
 	d, _ := url.QueryUnescape(r.RequestURI)
 	http.ServeFile(w, r, filepath.Join(ProgramDir, d))
-	// w.Header().Add("Content-Type", mime)
-	// w.Header().Add("Content-Disposition", "attachment; filename="+strings.Split(r.RequestURI, "/")[len(strings.Split(r.RequestURI, "/"))-1])
-	// io.Copy(w, f)
+
 }
 
 func selection(w http.ResponseWriter, r *http.Request) {
@@ -152,8 +134,6 @@ func selection(w http.ResponseWriter, r *http.Request) {
 		log.Println("Adding " + FileIdLookup[i].Path)
 		AddFileToZip(FileIdLookup[i], archive)
 	}
-	// AddFileToZip("file.msi", archive)
-	// AddFileToZip("file.pdf", archive)
 	archive.Close()
 }
 
@@ -184,6 +164,7 @@ func ListDirectory() (Page, error) {
 				Link:     *_rewrite + GetRelativePath(CurrentDir) + entry.Name(),
 			})
 		} else {
+			i, _ := entry.Info()
 			FileIdLookup[id] = FileFolder{
 				Path:        CurrentDir + entry.Name(),
 				isDirectory: false,
@@ -191,7 +172,7 @@ func ListDirectory() (Page, error) {
 			data = append(data, DirectoryListEntry{
 				Id:       id,
 				Icon:     *_rewrite + "/_html_/file.png",
-				LinkName: entry.Name(),
+				LinkName: fmt.Sprintf("%s (%s)", entry.Name(), GetHumanFileSize(i.Size())),
 				Link:     *_rewrite + "/files" + GetRelativePath(CurrentDir) + entry.Name(),
 			})
 
@@ -205,8 +186,22 @@ func ListDirectory() (Page, error) {
 	}, nil
 }
 
+func GetHumanFileSize(size int64) string {
+	kB := size / 1024
+	MB := kB / 1024
+	GB := MB / 1024
+	if GB > 0 {
+		return fmt.Sprintf("%d GB", GB)
+	} else if MB > 0 {
+		return fmt.Sprintf("%d MB", MB)
+	} else if kB > 0 {
+		return fmt.Sprintf("%d kB", kB)
+	} else {
+		return fmt.Sprintf("%d Bytes", size)
+	}
+}
+
 func GetPreviousDirectory(path string) string {
-	//s := strings.Split(path, "/")
 	s := regexp.MustCompile("\\\\|/").Split(path, -1)
 	s = s[0 : len(s)-2]
 	var val string
@@ -248,7 +243,6 @@ func AddFileToZip(toAdd FileFolder, archive *zip.Writer) {
 
 func AddFolderToZip(ZipRoot string, relativeRoot string, archive *zip.Writer) {
 	// Created the passed directory
-	//writer, _ := archive.Create(relativeRoot)
 	// Start walking through the passed directory
 	ZipRoot = ChangeSeparator(ZipRoot)
 	relativeRoot = ChangeSeparator(relativeRoot)
